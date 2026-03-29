@@ -79,7 +79,10 @@ export async function getUsers() {
   if (supabase) {
     const { data, error } = await supabase.from('users').select('*')
     if (error) { console.error('getUsers error:', error); return [] }
-    return data
+    return data.map(u => ({
+      ...u,
+      favGenres: typeof u.favGenres === 'string' ? JSON.parse(u.favGenres) : (u.favGenres || []),
+    }))
   }
   try { return JSON.parse(localStorage.getItem('fbc-users') || '[]') } catch { return [] }
 }
