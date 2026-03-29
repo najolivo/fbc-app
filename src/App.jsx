@@ -60,6 +60,97 @@ function fmtD(ts){return new Date(ts).toLocaleDateString("en-US",{month:"short",
 function genInviteCode(){return "FBC-"+Math.random().toString(36).slice(2,6).toUpperCase()}
 function weekNum(){const d=new Date();const start=new Date(d.getFullYear(),0,1);return Math.ceil(((d-start)/86400000+start.getDay()+1)/7)}
 function isReactionImage(r){return r&&(r.startsWith("http")||r.startsWith("data:"))}
+function isLateNight(ts){const h=new Date(ts).getHours();return h>=0&&h<5;}
+function getWeekKeys(subs,name){const wks=new Set();subs.filter(s=>s.name===name&&!s.deleted).forEach(s=>wks.add(getWk(new Date(s.timestamp))));return[...wks].sort();}
+
+// ─── Streak Calculator ──────────────────────────────────────────────────────
+function calcStreak(name, subs) {
+  const weeks = getWeekKeys(subs, name);
+  if (weeks.length === 0) return 0;
+  let streak = 1;
+  const now = getWk();
+  const lastWeek = weeks[weeks.length - 1];
+  if (lastWeek !== now) {
+    // Check if they missed this week — give grace if week isn't over (before Saturday)
+    const today = new Date().getDay();
+    if (today > 0 && today < 6 && lastWeek !== now) return 0; // Mon-Fri, didn't drop yet, previous streak broken
+    if (lastWeek !== now) return 0;
+  }
+  for (let i = weeks.length - 1; i > 0; i--) {
+    const curr = new Date(weeks[i]);
+    const prev = new Date(weeks[i - 1]);
+    const diff = (curr - prev) / 86400000;
+    if (diff >= 6 && diff <= 8) streak++;
+    else break;
+  }
+  return streak;
+}
+
+// ─── Music Personality Badge (primary badge) ─────────────────────────────────
+function calcBadge(name, subs) {
+  const myDrops = subs.filter(s => s.name === name && !s.deleted);
+  if (myDrops.length === 0) return { emoji: "🎵", title: "New Listener", desc: "Drop your first track" };
+  const genres = new Set(myDrops.map(s => s.genre));
+  const tc = {};
+  myDrops.forEach(s => s.tags?.forEach(tg => { tc[tg] = (tc[tg] || 0) + 1; }));
+  const avgObs = myDrops.reduce((a, s) => a + (s.obsession || 3), 0) / myDrops.length;
+
+  if (avgObs >= 4.5) return { emoji: "🫠", title: "Unhealthy Listener", desc: "Average obsession 4.5+" };
+  if (genres.size >= 6) return { emoji: "🌍", title: "World Listener", desc: `${genres.size} genres explored` };
+  if ((tc["discovery"]||0) + (tc["deep cut"]||0) >= 3) return { emoji: "🔭", title: "The Explorer", desc: "Always finding something new" };
+  if (genres.size === 1 && myDrops.length >= 3) return { emoji: "💎", title: "Genre Loyalist", desc: `All in on ${[...genres][0]}` };
+  if ((tc["throwback"]||0) >= 3) return { emoji: "📼", title: "Time Traveler", desc: "Living in the throwbacks" };
+  if ((tc["hype"]||0) >= 3) return { emoji: "⚡", title: "The Hype", desc: "Bringing the energy" };
+  if ((tc["vibe"]||0) >= 3) return { emoji: "🌊", title: "Vibe Curator", desc: "Setting the mood" };
+  if ((tc["guilty pleasure"]||0) >= 2) return { emoji: "🙈", title: "No Shame", desc: "Guilty pleasures on display" };
+  if (myDrops.length >= 8) return { emoji: "🔥", title: "Top Contributor", desc: `${myDrops.length} drops` };
+  if (myDrops.length >= 3) return { emoji: "🎧", title: "Regular", desc: "Consistent contributor" };
+  return { emoji: "🌱", title: "Rising", desc: "Just getting started" };
+}
+
+// ─── Achievement System ──────────────────────────────────────────────────────
+function calcAchievements(name, subs) {
+  const my = subs.filter(s => s.name === name && !s.deleted);
+  const totalRx = my.reduce((a, s) => a + Object.values(s.reactions || {}).reduce((x, y) => x + y, 0), 0);
+  const maxRx = Math.max(...my.map(s => Object.values(s.reactions || {}).reduce((x, y) => x + y, 0)), 0);
+  const genres = new Set(my.map(s => s.genre)).size;
+  const streak = calcStreak(name, subs);
+  const lateNights = my.filter(s => isLateNight(s.timestamp)).length;
+  const tags = {};
+  my.forEach(s => s.tags?.forEach(tg => { tags[tg] = (tags[tg] || 0) + 1; }));
+
+  const all = [
+    { id: "first", emoji: "🎤", title: "First Drop", desc: "Shared your first track", earned: my.length >= 1 },
+    { id: "five", emoji: "✋", title: "High Five", desc: "5 drops", earned: my.length >= 5 },
+    { id: "ten", emoji: "🔟", title: "Double Digits", desc: "10 drops", earned: my.length >= 10 },
+    { id: "twenty", emoji: "🏆", title: "Veteran", desc: "20 drops", earned: my.length >= 20 },
+    { id: "genres3", emoji: "🎨", title: "Eclectic", desc: "3 different genres", earned: genres >= 3 },
+    { id: "genres6", emoji: "🌍", title: "World Tour", desc: "6 different genres", earned: genres >= 6 },
+    { id: "genres10", emoji: "🪐", title: "Genre Galaxy", desc: "10 different genres", earned: genres >= 10 },
+    { id: "viral", emoji: "📈", title: "Viral", desc: "10+ reactions on one post", earned: maxRx >= 10 },
+    { id: "loved", emoji: "💜", title: "Beloved", desc: "50 total reactions", earned: totalRx >= 50 },
+    { id: "streak3", emoji: "🔥", title: "On Fire", desc: "3 week streak", earned: streak >= 3 },
+    { id: "streak8", emoji: "☄️", title: "Unstoppable", desc: "8 week streak", earned: streak >= 8 },
+    { id: "nightowl", emoji: "🌙", title: "Night Owl", desc: "3 late night drops", earned: lateNights >= 3 },
+    { id: "explorer", emoji: "🔭", title: "Deep Diver", desc: "5 discovery/deep cut tags", earned: ((tags["discovery"]||0) + (tags["deep cut"]||0)) >= 5 },
+    { id: "nostalgia", emoji: "📼", title: "Nostalgia Trip", desc: "5 throwback tags", earned: (tags["throwback"]||0) >= 5 },
+    { id: "guilty", emoji: "🙈", title: "Shameless", desc: "3 guilty pleasures", earned: (tags["guilty pleasure"]||0) >= 3 },
+    { id: "obsessed", emoji: "🫠", title: "Clinically Obsessed", desc: "5 posts rated Unhealthy", earned: my.filter(s => s.obsession === 5).length >= 5 },
+  ];
+  return all;
+}
+
+// ─── Drop of the Week ────────────────────────────────────────────────────────
+function getDropOfWeek(subs) {
+  const wk = getWk();
+  const weekSubs = subs.filter(s => !s.deleted && getWk(new Date(s.timestamp)) === wk);
+  if (weekSubs.length === 0) return null;
+  return weekSubs.reduce((best, s) => {
+    const rx = Object.values(s.reactions || {}).reduce((a, b) => a + b, 0);
+    const bestRx = Object.values(best.reactions || {}).reduce((a, b) => a + b, 0);
+    return rx > bestRx ? s : best;
+  }, weekSubs[0]);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // VISUALIZATIONS
@@ -444,6 +535,16 @@ export default function FBC(){
   // Profile
   const [showProfile, setShowProfile] = useState(false);
   const [pfpUploading, setPfpUploading] = useState(false);
+  const [editBio, setEditBio] = useState("");
+  const [editDisplayName, setEditDisplayName] = useState("");
+  const [editFavGenres, setEditFavGenres] = useState([]);
+
+  // Mini profile card (viewing other users)
+  const [viewingProfile, setViewingProfile] = useState(null); // user name or null
+
+  // Save feedback
+  const [savedMsg, setSavedMsg] = useState("");
+  const flash = useCallback((msg="✓") => { setSavedMsg(msg); setTimeout(() => setSavedMsg(""), 1500); }, []);
 
   // Admin viz override
   const [vizOverride, setVizOverride] = useState("");
@@ -557,7 +658,10 @@ export default function FBC(){
   // Submit
   const handleSubmit = useCallback(async()=>{
     if(!user||!fl||!fno||!fm||!fg||ft.length===0)return;
-    const ns={id:uid(),name:user.name,link:fl,note:fno,tags:ft,mood:fm,genre:fg,obsession:fo,reactions:{},timestamp:Date.now(),deleted:false};
+    const now=Date.now();
+    const finalTags=[...ft];
+    if(isLateNight(now)&&!finalTags.includes("🌙 late night"))finalTags.push("🌙 late night");
+    const ns={id:uid(),name:user.name,link:fl,note:fno,tags:finalTags,mood:fm,genre:fg,obsession:fo,reactions:{},timestamp:now,deleted:false,mystery:false};
     setSubs(prev=>[ns,...prev]);
     await saveSub(ns);
     setFl("");setFno("");setFt([]);setFm("");setFg("");setFo(3);
@@ -605,6 +709,8 @@ export default function FBC(){
     return vizIndex%VIZ_TYPES.length;
   },[vizOverride,vizIndex]);
   const getUserPic=useCallback((name)=>{const u=users.find(u=>u.name===name);return u?.picture||null;},[users]);
+  const getUserProfile=useCallback((name)=>users.find(u=>u.name===name)||null,[users]);
+  const dotw=useMemo(()=>getDropOfWeek(subs),[subs]);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // STYLES
@@ -703,6 +809,9 @@ export default function FBC(){
     <div style={{minHeight:"100vh",background:T.bg,fontFamily:"'DM Sans',sans-serif",color:T.text}}>
       <style>{css}</style>
 
+      {/* Toast notification */}
+      {savedMsg&&<div style={{position:"fixed",bottom:80,left:"50%",transform:"translateX(-50%)",padding:"8px 20px",borderRadius:20,background:T.accent,color:"#fff",fontSize:12,fontWeight:700,zIndex:200,animation:"fi 0.2s ease",boxShadow:"0 4px 16px rgba(0,0,0,0.3)"}}>{savedMsg}</div>}
+
       <header style={{padding:"16px 20px 0",position:"sticky",top:0,zIndex:40,background:T.bg}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,maxWidth:860,margin:"0 auto"}}>
           <div style={{display:"flex",alignItems:"baseline",gap:8}}>
@@ -786,12 +895,28 @@ export default function FBC(){
                     {embed?.type==="apple"&&<iframe src={embed.src} width="100%" height="175" frameBorder="0" allow="autoplay; encrypted-media" loading="lazy" sandbox="allow-forms allow-popups allow-same-origin allow-scripts allow-top-navigation-by-user-activation" style={{borderRadius:"14px 14px 0 0",display:"block"}}/>}
                     {(!embed||embed.type==="soundcloud")&&<div style={{padding:"14px 18px 0"}}><a href={sub.link} target="_blank" rel="noopener noreferrer" style={{color:T.accent,fontSize:12,wordBreak:"break-all",textDecoration:"none"}}>{embed?.type==="soundcloud"?"🔊":"🔗"} {sub.link}</a></div>}
                     <div style={{padding:"12px 18px 14px"}}>
+                      {/* Crown banner for Drop of the Week */}
+                      {dotw&&dotw.id===sub.id&&<div style={{display:"flex",alignItems:"center",gap:5,marginBottom:8,padding:"4px 10px",borderRadius:8,background:T.gradient,width:"fit-content"}}>
+                        <span style={{fontSize:12}}>👑</span><span style={{fontSize:10,fontWeight:700,color:"#fff"}}>{lang==="es"?"Drop de la Semana":"Drop of the Week"}</span>
+                      </div>}
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
                         <div style={{display:"flex",alignItems:"center",gap:7}}>
-                          {getUserPic(sub.name)
-                            ?<img src={getUserPic(sub.name)} style={{width:26,height:26,borderRadius:"50%",objectFit:"cover",flexShrink:0}} alt="" />
-                            :<div style={{width:26,height:26,borderRadius:"50%",background:`hsl(${sub.name.charCodeAt(0)*37%360},45%,${theme==="vinyl"?"45%":"55%"})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff",flexShrink:0}}>{sub.name[0]}</div>}
-                          <span style={{fontWeight:700,fontSize:13}}>{sub.name}</span>
+                        {sub.mystery&&!sub.mysteryRevealed?(
+                          <div style={{display:"flex",alignItems:"center",gap:7}}>
+                            <div style={{width:26,height:26,borderRadius:"50%",background:T.gradient,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>?</div>
+                            <span style={{fontWeight:700,fontSize:13,color:T.accent,fontStyle:"italic"}}>{lang==="es"?"Misterio":"Mystery Drop"}</span>
+                            <span style={{fontSize:11}}>🕵️</span>
+                          </div>
+                        ):(
+                          <button style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",padding:0}} onClick={()=>setViewingProfile(sub.name)}>
+                            {getUserPic(sub.name)
+                              ?<img src={getUserPic(sub.name)} style={{width:26,height:26,borderRadius:"50%",objectFit:"cover",flexShrink:0}} alt="" />
+                              :<div style={{width:26,height:26,borderRadius:"50%",background:`hsl(${sub.name.charCodeAt(0)*37%360},45%,${theme==="vinyl"?"45%":"55%"})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff",flexShrink:0}}>{sub.name[0]}</div>}
+                            <span style={{fontWeight:700,fontSize:13,color:T.text}}>{sub.name}</span>
+                            {(()=>{const b=calcBadge(sub.name,subs);return <span style={{fontSize:12}} title={b.title}>{b.emoji}</span>;})()}
+                            {(()=>{const sk=calcStreak(sub.name,subs);return sk>=2?<span style={{fontSize:11,display:"flex",alignItems:"center",gap:1}} title={`${sk} week streak`}>{"🔥".repeat(Math.min(sk,5))}<span style={{fontSize:9,fontWeight:800,color:T.accent}}>{sk}</span></span>:null;})()}
+                          </button>
+                        )}
                           {sub.edited&&<span style={{fontSize:9,color:T.textMuted}}>{t("edited")}</span>}
                         </div>
                         <div style={{display:"flex",alignItems:"center",gap:5}}>
@@ -799,7 +924,7 @@ export default function FBC(){
                           <span style={{fontSize:10,color:T.textMuted}}>{ago(sub.timestamp)}</span>
                         </div>
                       </div>
-                      {isEd?(<div style={{marginBottom:8}}><textarea className="in" value={editNote} onChange={e=>setEditNote(e.target.value)} style={{minHeight:50,marginBottom:6}}/><div style={{display:"flex",gap:6}}><button className="ib" style={{color:T.accent}} onClick={()=>saveEditFn(sub.id)}>{t("save")}</button><button className="ib" onClick={()=>{setEditId(null);setEditNote("");}}>{t("cancel")}</button></div></div>):(
+                      {isEd?(<div style={{marginBottom:8}}><textarea className="in" value={editNote} onChange={e=>setEditNote(e.target.value)} style={{minHeight:50,marginBottom:6}}/><div style={{display:"flex",gap:6}}><button className="ib" style={{color:T.accent}} onClick={()=>{saveEditFn(sub.id);flash("✓")}}>{t("save")}</button><button className="ib" onClick={()=>{setEditId(null);setEditNote("");}}>{t("cancel")}</button></div></div>):(
                         <p style={{fontSize:13,color:T.textSub,lineHeight:1.5,marginBottom:8,fontStyle:"italic"}}>"{sub.note}"</p>)}
                       <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:8}}>
                         {sub.tags?.map(tg=><span key={tg} className="p">{tg}</span>)}
@@ -862,6 +987,122 @@ export default function FBC(){
         </main>
       )}
 
+      {/* ══════ FULL PROFILE PAGE ══════ */}
+      {page==="profile"&&viewingProfile&&(
+        <main style={{padding:"20px 20px 90px",maxWidth:860,margin:"0 auto"}} className="fi">
+          {(()=>{
+            const p=getUserProfile(viewingProfile);
+            const badge=calcBadge(viewingProfile,subs);
+            const streak=calcStreak(viewingProfile,subs);
+            const achievements=calcAchievements(viewingProfile,subs);
+            const earned=achievements.filter(a=>a.earned);
+            const locked=achievements.filter(a=>!a.earned);
+            const drops=subs.filter(s=>s.name===viewingProfile&&!s.deleted).sort((a,b)=>b.timestamp-a.timestamp);
+            const dropGenres=[...new Set(drops.map(s=>s.genre))];
+            const favGenres=(typeof p?.favGenres==="string"?JSON.parse(p.favGenres):p?.favGenres)||[];
+            const totalRx=drops.reduce((a,s)=>a+Object.values(s.reactions||{}).reduce((x,y)=>x+y,0),0);
+            const topMood=(()=>{const c={};drops.forEach(s=>{c[s.mood]=(c[s.mood]||0)+1});return Object.entries(c).sort((a,b)=>b[1]-a[1])[0]?.[0]||"—";})();
+            return(<>
+              {/* Back button */}
+              <button className="ib" onClick={()=>{setPage("board");setViewingProfile(null);}} style={{marginBottom:16,fontSize:12}}>← {t("dropBoard")}</button>
+
+              {/* Header */}
+              <div style={{textAlign:"center",marginBottom:28}}>
+                {p?.picture
+                  ? <img src={p.picture} style={{width:88,height:88,borderRadius:"50%",objectFit:"cover",border:`3px solid ${T.cardBorder}`,margin:"0 auto 12px",display:"block"}} alt="" />
+                  : <div style={{width:88,height:88,borderRadius:"50%",background:`hsl(${viewingProfile.charCodeAt(0)*37%360},45%,${theme==="vinyl"?"45%":"55%"})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:36,fontWeight:800,color:"#fff",margin:"0 auto 12px"}}>{viewingProfile[0]}</div>}
+                <h2 style={{fontFamily:"'Instrument Serif',serif",fontSize:28,fontWeight:400,marginBottom:4}}>{viewingProfile}</h2>
+                {p?.bio&&<p style={{color:T.textSub,fontSize:13,fontStyle:"italic",marginBottom:8}}>"{p.bio}"</p>}
+
+                {/* Badge + streak */}
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+                  <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"4px 12px",borderRadius:16,background:T.pillBg,fontSize:12}}>
+                    <span>{badge.emoji}</span><span style={{fontWeight:700,color:T.text}}>{badge.title}</span>
+                  </span>
+                  {streak>=1&&<span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"4px 12px",borderRadius:16,background:T.pillBg,fontSize:12}}>
+                    {"🔥".repeat(Math.min(streak,5))}<span style={{fontWeight:700,color:T.accent}}>{streak}w</span>
+                  </span>}
+                </div>
+
+                {/* Stats */}
+                <div style={{display:"flex",gap:10,justifyContent:"center",marginBottom:16}}>
+                  {[{v:drops.length,l:t("totalDrops")},{v:dropGenres.length,l:t("genres")},{v:totalRx,l:lang==="es"?"Reacciones":"Reactions"},{v:topMood,l:lang==="es"?"Mood principal":"Top Mood"}].map((s,i)=>(
+                    <div key={i} style={{padding:"10px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.cardBorder}`,textAlign:"center",minWidth:65}}>
+                      <div style={{fontSize:18,fontWeight:800}}>{s.v}</div>
+                      <div style={{fontSize:9,color:T.textMuted}}>{s.l}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Fav genres */}
+                {favGenres.length>0&&<div style={{marginBottom:12}}>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:4,justifyContent:"center"}}>
+                    {favGenres.map(g=>(<span key={g} className="p" style={{background:T.tagGenre,color:T.tagGenreC}}>{g}</span>))}
+                  </div>
+                </div>}
+              </div>
+
+              {/* Achievements */}
+              <div className="cd" style={{padding:18,marginBottom:20}}>
+                <h3 style={{fontFamily:"'Instrument Serif',serif",fontSize:18,marginBottom:4}}>{lang==="es"?"Logros":"Achievements"}</h3>
+                <p style={{fontSize:11,color:T.textMuted,marginBottom:14}}>{earned.length} / {achievements.length} {lang==="es"?"desbloqueados":"unlocked"}</p>
+
+                {/* Earned */}
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))",gap:8,marginBottom:12}}>
+                  {earned.map(a=>(
+                    <div key={a.id} style={{padding:"10px 12px",borderRadius:10,background:T.pillBg,border:`1px solid ${T.cardBorder}`}}>
+                      <div style={{fontSize:24,marginBottom:4}}>{a.emoji}</div>
+                      <div style={{fontSize:12,fontWeight:700,color:T.text}}>{a.title}</div>
+                      <div style={{fontSize:9,color:T.textMuted}}>{a.desc}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Locked */}
+                {locked.length>0&&<>
+                  <div style={{fontSize:10,color:T.textMuted,marginBottom:8}}>{lang==="es"?"Por desbloquear":"Locked"}</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))",gap:8}}>
+                    {locked.map(a=>(
+                      <div key={a.id} style={{padding:"10px 12px",borderRadius:10,border:`1px dashed ${T.cardBorder}`,opacity:0.4}}>
+                        <div style={{fontSize:24,marginBottom:4,filter:"grayscale(1)"}}>🔒</div>
+                        <div style={{fontSize:12,fontWeight:700,color:T.textMuted}}>{a.title}</div>
+                        <div style={{fontSize:9,color:T.textMuted}}>{a.desc}</div>
+                      </div>
+                    ))}
+                  </div>
+                </>}
+              </div>
+
+              {/* Drop History */}
+              <h3 style={{fontFamily:"'Instrument Serif',serif",fontSize:18,marginBottom:12}}>{lang==="es"?"Historial de Drops":"Drop History"} ({drops.length})</h3>
+              <div style={{display:"grid",gap:10}}>
+                {drops.map(sub=>{
+                  const embed=getEmbed(sub.link);const obsK=OBSESSION.find(o=>o.v===sub.obsession)?.k||"";
+                  const rx=Object.values(sub.reactions||{}).reduce((a,b)=>a+b,0);
+                  return(
+                    <div key={sub.id} className="cd" style={{padding:"12px 16px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                        <div style={{display:"flex",flexWrap:"wrap",gap:3}}>
+                          {sub.tags?.map(tg=><span key={tg} className="p">{tg}</span>)}
+                          <span className="p" style={{background:T.tagMood,color:T.tagMoodC}}>{sub.mood}</span>
+                          <span className="p" style={{background:T.tagGenre,color:T.tagGenreC}}>{sub.genre}</span>
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                          {rx>0&&<span style={{fontSize:11,color:T.accent,fontWeight:700}}>{rx} ❤</span>}
+                          <span style={{fontSize:10,color:T.textMuted}}>{ago(sub.timestamp)}</span>
+                        </div>
+                      </div>
+                      <p style={{fontSize:12,color:T.textSub,fontStyle:"italic",lineHeight:1.4}}>"{sub.note}"</p>
+                      {embed&&<a href={sub.link} target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:T.accent,textDecoration:"none",marginTop:4,display:"block"}}>{embed.type} ↗</a>}
+                    </div>
+                  );
+                })}
+              </div>
+            </>);
+          })()}
+        </main>
+      )}
+
       <button className="fab" onClick={()=>setShowSubmit(true)}>+</button>
 
       {/* ══════ SUBMIT ══════ */}
@@ -905,49 +1146,198 @@ export default function FBC(){
             <button className="pb" style={{flex:1}} onClick={tryAdminLogin}>Enter</button>
           </div></div></div>)}
 
-      {/* ══════ PROFILE MODAL ══════ */}
+      {/* ══════ PROFILE MODAL (own profile editing) ══════ */}
       {showProfile&&user&&(
         <div className="ov" onClick={e=>{if(e.target===e.currentTarget)setShowProfile(false);}}>
-          <div className="ml fi" style={{maxWidth:360,textAlign:"center"}}>
+          <div className="ml fi" style={{maxWidth:400}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
               <h3 style={{fontFamily:"'Instrument Serif',serif",fontSize:20}}>{t("profile")}</h3>
               <button onClick={()=>setShowProfile(false)} style={{background:"none",border:"none",color:T.textMuted,fontSize:22,cursor:"pointer"}}>×</button>
             </div>
-            {/* Current avatar */}
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,marginBottom:20}}>
+
+            {/* Avatar + badge */}
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8,marginBottom:20}}>
               {getUserPic(user.name)
-                ? <img src={getUserPic(user.name)} style={{width:80,height:80,borderRadius:"50%",objectFit:"cover",border:`3px solid ${T.cardBorder}`}} alt="" />
-                : <div style={{width:80,height:80,borderRadius:"50%",background:`hsl(${user.name.charCodeAt(0)*37%360},45%,${theme==="vinyl"?"45%":"55%"})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,fontWeight:800,color:"#fff"}}>{user.name[0]}</div>}
-              <div style={{fontSize:18,fontWeight:800}}>{user.name}</div>
+                ? <img src={getUserPic(user.name)} style={{width:72,height:72,borderRadius:"50%",objectFit:"cover",border:`3px solid ${T.cardBorder}`}} alt="" />
+                : <div style={{width:72,height:72,borderRadius:"50%",background:`hsl(${user.name.charCodeAt(0)*37%360},45%,${theme==="vinyl"?"45%":"55%"})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,fontWeight:800,color:"#fff"}}>{user.name[0]}</div>}
+              {(()=>{const b=calcBadge(user.name,subs);return(
+                <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 12px",borderRadius:16,background:T.pillBg}}>
+                  <span style={{fontSize:16}}>{b.emoji}</span>
+                  <span style={{fontSize:12,fontWeight:700,color:T.text}}>{b.title}</span>
+                </div>
+              );})()}
               <div style={{fontSize:11,color:T.textMuted}}>{user.role||"member"}</div>
             </div>
-            {/* Upload */}
-            <label style={{display:"inline-block",padding:"10px 24px",borderRadius:10,background:T.gradient,color:"#fff",fontSize:13,fontWeight:700,cursor:pfpUploading?"wait":"pointer",fontFamily:"'DM Sans',sans-serif",opacity:pfpUploading?0.5:1}}>
-              {pfpUploading?t("uploading"):t("changePicture")}
-              <input type="file" accept="image/*" style={{display:"none"}} disabled={pfpUploading} onChange={async e=>{
-                const file=e.target.files?.[0];if(!file)return;
-                if(file.size>500000){alert("Max 500KB");return;}
-                setPfpUploading(true);
-                try{
-                  const url=await uploadProfilePic(file,user.name);
-                  await updateUserProfile(user.name,{picture:url});
-                  setUsers(prev=>prev.map(u=>u.name===user.name?{...u,picture:url}:u));
-                  setUser(prev=>({...prev,picture:url}));
-                  saveSession({...user,picture:url,theme,lang});
-                }catch(err){alert("Upload failed: "+err.message)}
-                finally{setPfpUploading(false);e.target.value="";}
-              }} />
-            </label>
-            {getUserPic(user.name)&&(
-              <button className="ib" style={{display:"block",margin:"8px auto",color:"#cc4444"}} onClick={async()=>{
+
+            {/* Photo upload */}
+            <div style={{display:"flex",justifyContent:"center",gap:8,marginBottom:20}}>
+              <label style={{padding:"6px 16px",borderRadius:8,background:T.gradient,color:"#fff",fontSize:11,fontWeight:700,cursor:pfpUploading?"wait":"pointer",fontFamily:"'DM Sans',sans-serif",opacity:pfpUploading?0.5:1}}>
+                {pfpUploading?t("uploading"):t("changePicture")}
+                <input type="file" accept="image/*" style={{display:"none"}} disabled={pfpUploading} onChange={async e=>{
+                  const file=e.target.files?.[0];if(!file)return;
+                  if(file.size>500000){alert("Max 500KB");return;}
+                  setPfpUploading(true);
+                  try{
+                    const url=await uploadProfilePic(file,user.name);
+                    await updateUserProfile(user.name,{picture:url});
+                    setUsers(prev=>prev.map(u=>u.name===user.name?{...u,picture:url}:u));
+                    setUser(prev=>({...prev,picture:url}));
+                    saveSession({...user,picture:url,theme,lang});
+                  }catch(err){alert("Upload failed: "+err.message)}
+                  finally{setPfpUploading(false);e.target.value="";}
+                }} />
+              </label>
+              {getUserPic(user.name)&&<button className="ib" style={{color:"#cc4444"}} onClick={async()=>{
                 await updateUserProfile(user.name,{picture:null});
                 setUsers(prev=>prev.map(u=>u.name===user.name?{...u,picture:null}:u));
                 setUser(prev=>({...prev,picture:null}));
                 saveSession({...user,picture:null,theme,lang});
-              }}>{t("removePicture")}</button>
-            )}
-            <p style={{fontSize:9,color:T.textMuted,marginTop:12}}>{t("pictureHint")}</p>
+              }}>{t("removePicture")}</button>}
+            </div>
+
+            <div style={{display:"flex",flexDirection:"column",gap:14,textAlign:"left"}}>
+              {/* Display name */}
+              <div>
+                <label className="lb">{t("edit")} {t("yourName")}</label>
+                <div style={{display:"flex",gap:6}}>
+                  <input className="in" value={editDisplayName||user.name} onChange={e=>setEditDisplayName(e.target.value)} style={{flex:1}} />
+                  {editDisplayName&&editDisplayName!==user.name&&<button className="pb" style={{width:"auto",padding:"8px 14px",fontSize:11}} onClick={async()=>{
+                    const newName=editDisplayName.trim();if(!newName)return;
+                    if(users.find(u=>u.name.toLowerCase()===newName.toLowerCase()&&u.name!==user.name)){alert(t("nameTaken"));return;}
+                    await updateUserProfile(user.name,{name:newName});
+                    setUsers(prev=>prev.map(u=>u.name===user.name?{...u,name:newName}:u));
+                    setUser(prev=>({...prev,name:newName}));
+                    saveSession({...user,name:newName,theme,lang});
+                    setEditDisplayName("");flash("✓ Saved");
+                  }}>{t("save")}</button>}
+                </div>
+              </div>
+
+              {/* Bio */}
+              <div>
+                <label className="lb">Bio</label>
+                <div style={{display:"flex",gap:6}}>
+                  <input className="in" placeholder={lang==="es"?"ej. amante del jazz, coleccionista de vinilos":"e.g. jazz head, vinyl collector"} value={editBio||(getUserProfile(user.name)?.bio||"")} onChange={e=>setEditBio(e.target.value)} style={{flex:1}} />
+                  <button className="pb" style={{width:"auto",padding:"8px 14px",fontSize:11}} onClick={async()=>{
+                    await updateUserProfile(user.name,{bio:editBio.trim()});
+                    setUsers(prev=>prev.map(u=>u.name===user.name?{...u,bio:editBio.trim()}:u));
+                    setEditBio("");flash("✓ Saved");
+                  }}>{t("save")}</button>
+                </div>
+              </div>
+
+              {/* Favorite genres */}
+              <div>
+                <label className="lb">{lang==="es"?"Géneros favoritos":"Favorite genres"}</label>
+                <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                  {genres.map(g=>{
+                    const favs=editFavGenres.length?editFavGenres:(getUserProfile(user.name)?.favGenres||[]);
+                    const isOn=favs.includes(g);
+                    return(<span key={g} className={`p ts ${isOn?"on":""}`} onClick={()=>{
+                      const cur=editFavGenres.length?editFavGenres:(getUserProfile(user.name)?.favGenres||[]);
+                      const next=isOn?cur.filter(x=>x!==g):cur.length<5?[...cur,g]:cur;
+                      setEditFavGenres(next);
+                    }}>{g}</span>);
+                  })}
+                </div>
+                {editFavGenres.length>0&&<button className="pb" style={{width:"auto",padding:"6px 14px",fontSize:11,marginTop:8}} onClick={async()=>{
+                  await updateUserProfile(user.name,{favGenres:JSON.stringify(editFavGenres)});
+                  setUsers(prev=>prev.map(u=>u.name===user.name?{...u,favGenres:editFavGenres}:u));
+                  setEditFavGenres([]);flash("✓ Saved");
+                }}>{t("save")}</button>}
+                <p style={{fontSize:9,color:T.textMuted,marginTop:4}}>{lang==="es"?"Máximo 5":"Max 5"}</p>
+              </div>
+            </div>
           </div>
+        </div>
+      )}
+
+      {/* ══════ MINI PROFILE CARD (viewing others) ══════ */}
+      {viewingProfile&&(
+        <div className="ov" onClick={e=>{if(e.target===e.currentTarget)setViewingProfile(null);}}>
+          {(()=>{
+            const p=getUserProfile(viewingProfile);
+            const badge=calcBadge(viewingProfile,subs);
+            const drops=subs.filter(s=>s.name===viewingProfile&&!s.deleted);
+            const dropGenres=[...new Set(drops.map(s=>s.genre))];
+            const favGenres=(typeof p?.favGenres==="string"?JSON.parse(p.favGenres):p?.favGenres)||[];
+            const totalReactions=drops.reduce((a,s)=>a+Object.values(s.reactions||{}).reduce((x,y)=>x+y,0),0);
+            return(
+              <div className="ml fi" style={{maxWidth:360,textAlign:"center"}} onClick={e=>e.stopPropagation()}>
+                <button onClick={()=>setViewingProfile(null)} style={{position:"absolute",top:16,right:16,background:"none",border:"none",color:T.textMuted,fontSize:20,cursor:"pointer"}}>×</button>
+
+                {/* Avatar */}
+                {p?.picture
+                  ? <img src={p.picture} style={{width:64,height:64,borderRadius:"50%",objectFit:"cover",border:`3px solid ${T.cardBorder}`,margin:"0 auto 12px"}} alt="" />
+                  : <div style={{width:64,height:64,borderRadius:"50%",background:`hsl(${viewingProfile.charCodeAt(0)*37%360},45%,${theme==="vinyl"?"45%":"55%"})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,fontWeight:800,color:"#fff",margin:"0 auto 12px"}}>{viewingProfile[0]}</div>}
+
+                <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>{viewingProfile}</div>
+                {p?.bio&&<div style={{fontSize:12,color:T.textSub,fontStyle:"italic",marginBottom:8}}>"{p.bio}"</div>}
+
+                {/* Badge */}
+                <div style={{display:"inline-flex",alignItems:"center",gap:6,padding:"5px 14px",borderRadius:16,background:T.pillBg,marginBottom:16}}>
+                  <span style={{fontSize:16}}>{badge.emoji}</span>
+                  <div style={{textAlign:"left"}}>
+                    <div style={{fontSize:12,fontWeight:700,color:T.text}}>{badge.title}</div>
+                    <div style={{fontSize:9,color:T.textMuted}}>{badge.desc}</div>
+                  </div>
+                </div>
+
+                {/* Stats row */}
+                <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:16}}>
+                  {[{v:drops.length,l:t("totalDrops")},{v:dropGenres.length,l:t("genres")},{v:totalReactions,l:lang==="es"?"Reacciones":"Reactions"}].map((s,i)=>(
+                    <div key={i} style={{padding:"8px 14px",borderRadius:10,background:T.card,border:`1px solid ${T.cardBorder}`,textAlign:"center",minWidth:60}}>
+                      <div style={{fontSize:18,fontWeight:800}}>{s.v}</div>
+                      <div style={{fontSize:9,color:T.textMuted}}>{s.l}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Fav genres */}
+                {favGenres.length>0&&(
+                  <div style={{marginBottom:12}}>
+                    <div style={{fontSize:10,color:T.textMuted,fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>{lang==="es"?"Géneros favoritos":"Favorite genres"}</div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:4,justifyContent:"center"}}>
+                      {favGenres.map(g=>(<span key={g} className="p" style={{background:T.tagGenre,color:T.tagGenreC}}>{g}</span>))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Recent genres from drops */}
+                {dropGenres.length>0&&(
+                  <div style={{marginBottom:12}}>
+                    <div style={{fontSize:10,color:T.textMuted,fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>{lang==="es"?"Géneros compartidos":"Genres dropped"}</div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:4,justifyContent:"center"}}>
+                      {dropGenres.map(g=>(<span key={g} className="p">{g}</span>))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Streak */}
+                {(()=>{const sk=calcStreak(viewingProfile,subs);return sk>=1?(
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:4,marginBottom:12}}>
+                    <span>{"🔥".repeat(Math.min(sk,5))}</span>
+                    <span style={{fontSize:12,fontWeight:800,color:T.accent}}>{sk} {lang==="es"?"semanas seguidas":"week streak"}</span>
+                  </div>
+                ):null;})()}
+
+                {/* Collectible Badges */}
+                {(()=>{const ach=calcAchievements(viewingProfile,subs).filter(a=>a.earned);return ach.length>0?(
+                  <div style={{marginBottom:12}}>
+                    <div style={{fontSize:10,color:T.textMuted,fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>{lang==="es"?"Logros":"Achievements"} ({ach.length})</div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:4,justifyContent:"center"}}>
+                      {ach.map(a=>(<span key={a.id} title={`${a.title}: ${a.desc}`} style={{fontSize:18,cursor:"default",transition:"transform 0.15s"}} onMouseEnter={e=>e.target.style.transform="scale(1.3)"} onMouseLeave={e=>e.target.style.transform="scale(1)"}>{a.emoji}</span>))}
+                    </div>
+                  </div>
+                ):null;})()}
+
+                {/* View full profile */}
+                <button className="pb" style={{width:"auto",padding:"8px 20px",fontSize:11,margin:"8px auto 0",display:"block"}} onClick={()=>{setPage("profile");setShowProfile(false);}}>
+                  {lang==="es"?"Ver perfil completo":"View full profile"}
+                </button>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -972,7 +1362,7 @@ export default function FBC(){
             <p style={{fontSize:11,color:T.textMuted,marginBottom:10}}>{t("themeDesc")}</p>
             <div style={{display:"flex",gap:6}}>
               <input className="in" placeholder="e.g. Song you always return to" value={weeklyTheme} onChange={e=>setWeeklyTheme(e.target.value)} style={{flex:1}} />
-              <button className="pb" style={{width:"auto",padding:"8px 20px",fontSize:12}} onClick={()=>saveCfg("weeklyTheme",weeklyTheme,"Set theme: "+weeklyTheme)}>Save</button>
+              <button className="pb" style={{width:"auto",padding:"8px 20px",fontSize:12}} onClick={()=>{saveCfg("weeklyTheme",weeklyTheme,"Set theme: "+weeklyTheme);flash("✓ Theme saved")}}>{t("save")}</button>
             </div>
             {weeklyTheme&&<button className="ib" style={{marginTop:8,color:"#cc4444"}} onClick={()=>{setWeeklyTheme("");saveCfg("weeklyTheme","","Cleared weekly theme")}}>'{t("clearTheme")}</button>}
 
